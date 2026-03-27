@@ -1,5 +1,5 @@
 {
-  "name": "bigerror/wp-status-api",
+  "name": "wp-status-api",
   "description": "WordPress plugin: Status API endpoint voor storingsinformatie.",
   "type": "wordpress-plugin",
   "license": "proprietary",

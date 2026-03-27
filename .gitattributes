@@ -1,0 +1,10 @@
+* text=auto eol=lf
+
+# Don't include dev-only files in generated archives (git archive)
+/.github export-ignore
+/.idea export-ignore
+/.vscode export-ignore
+/vendor export-ignore
+/node_modules export-ignore
+/coverage export-ignore
+

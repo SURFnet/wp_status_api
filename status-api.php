@@ -4,6 +4,9 @@
  * Description: Deze plugin maakt een API end-point aan voor het geven van storings informatie.
  * Version: 0.9.2
  * Author: Hanno-Wybren Mook
+ * License: GPL-2.0-or-later
+ * License URI: https://www.gnu.org/licenses/gpl-2.0.html
+ * Text Domain: status-api
  */
 
 // Voorkom direct toegang tot het bestand
