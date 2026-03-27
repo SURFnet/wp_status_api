@@ -23,13 +23,22 @@ jobs:
       - name: Install Composer dependencies (no-dev)
         run: composer install --no-dev --prefer-dist --no-interaction --no-progress
 
-      - name: Create zip (include vendor)
+      - name: Create zip (plugin folder in root)
         run: |
           PLUGIN_SLUG="wp_status_api"
           ZIP_NAME="${PLUGIN_SLUG}-${GITHUB_REF_NAME}.zip"
-          mkdir -p dist
-          zip -r "dist/${ZIP_NAME}" . \
-            -x ".git/*" ".github/*" "node_modules/*" "coverage/*" "tmp/*" "temp/*"
+          mkdir -p dist package/"${PLUGIN_SLUG}"
+          rsync -a --delete \
+            --exclude ".git" \
+            --exclude ".github" \
+            --exclude "node_modules" \
+            --exclude "coverage" \
+            --exclude "tmp" \
+            --exclude "temp" \
+            --exclude "package" \
+            --exclude "dist" \
+            ./ package/"${PLUGIN_SLUG}"/
+          (cd package && zip -r "../dist/${ZIP_NAME}" "${PLUGIN_SLUG}")
           echo "ZIP_NAME=${ZIP_NAME}" >> "$GITHUB_ENV"
 
       - name: Create release and upload zip

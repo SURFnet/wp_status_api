@@ -2,7 +2,7 @@
 
 ## 0.9.5
 
-- (vul hier je wijzigingen in)
+- Updates are available
 
 ## 0.9.2
 

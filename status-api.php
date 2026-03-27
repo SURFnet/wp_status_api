@@ -18,12 +18,15 @@ if (file_exists(__DIR__ . '/vendor/autoload.php')) {
 
     if (class_exists('\\YahnisElsts\\PluginUpdateChecker\\v5\\PucFactory')) {
         $update_checker = \YahnisElsts\PluginUpdateChecker\v5\PucFactory::buildUpdateChecker(
-            'https://github.com/hmook/wp_status_api/',
+            'https://github.com/hmook/wp_status_api',
             __FILE__,
             'wp_status_api'
         );
 
-        $update_checker->setBranch('main');
+        // Gebruik de zip asset van een GitHub Release (consistent met onze build).
+        if (method_exists($update_checker, 'getVcsApi') && $update_checker->getVcsApi()) {
+            $update_checker->getVcsApi()->enableReleaseAssets();
+        }
     }
 }
 
