@@ -1,0 +1,29 @@
+name: Build plugin zip
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  zip:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Create zip (git archive)
+        run: |
+          PLUGIN_SLUG="wp_status_api"
+          ZIP_NAME="${PLUGIN_SLUG}-${GITHUB_REF_NAME}.zip"
+          mkdir -p dist
+          git archive --format=zip --prefix="${PLUGIN_SLUG}/" -o "dist/${ZIP_NAME}" "${GITHUB_REF_NAME}"
+          echo "ZIP_NAME=${ZIP_NAME}" >> "$GITHUB_ENV"
+
+      - name: Create release and upload zip
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/${{ env.ZIP_NAME }}
+
