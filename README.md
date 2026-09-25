@@ -18,7 +18,13 @@ define('STATUS_API_DELETE_DATA_ON_UNINSTALL', true);
 
 ## Authenticatie
 
-De API ondersteunt Bearer-token authenticatie. In de admin-instellingenpagina kun je een token genereren op basis van een API key/secret.
+De API ondersteunt Bearer-token authenticatie (aanbevolen). In de admin-instellingenpagina kun je een token genereren op basis van een API key/secret.
+
+Authenticatie met `?api_key=...&api_secret=...` in de URL werkt nog, maar is **verouderd**: het secret belandt zo in logs en browsergeschiedenis. Responses op zulke verzoeken bevatten een `Deprecation` header (RFC 9745). In het tabblad "API clients" zie je per client welke methode recent is gebruikt; stap over op de Bearer token voordat je de methode uitzet (filter `status_api_allow_query_auth`).
+
+## Audit-log
+
+Beheeracties op API clients (aanmaken, intrekken, secret regenereren, heractiveren, verwijderen) worden vastgelegd in de tabel `{prefix}status_api_audit` en zijn zichtbaar onder *API Instellingen → Audit-log*. Secrets worden nooit gelogd; van de API key alleen de eerste 8 tekens.
 
 ## Endpoints
 
@@ -44,6 +50,8 @@ curl -H "Authorization: Bearer <TOKEN>" \
 - `statusExpiryTimestampUtc` (int|null) — sinds 0.9.10
 - `statusExpiryIso8601` (string|null) — sinds 0.9.10, bijv. `2025-12-31T23:59:00+01:00`
 
+De `statusExpiry*` velden zijn gevuld zodra er bij een groene status een vervaldatum is ingesteld. Na automatisch verlopen wordt `status` `"geen"`, maar blijft de laatst ingestelde vervaldatum staan. Controleer dus altijd eerst `status`.
+
 Let op: `timestamp` en `statusExpiryTimestamp` zijn om historische redenen de lokale sitetijd weergegeven als Unix-timestamp (wijken af van UTC). Gebruik voor nieuwe integraties de `*Utc`/`*Iso8601` velden.
 
 ## Filters
@@ -52,6 +60,9 @@ Let op: `timestamp` en `statusExpiryTimestamp` zijn om historische redenen de lo
 - `status_api_auth_rate_limit_max_attempts` (int, standaard 20) — aantal mislukte pogingen per IP binnen het venster.
 - `status_api_auth_rate_limit_window` (int seconden, standaard 900).
 - `status_api_last_used_throttle` (int seconden, standaard 300) — hoe vaak "Laatst gebruikt" maximaal wordt bijgewerkt.
+- `status_api_status_capability` (string, standaard `edit_posts`) — recht om de statusmelding te bekijken/opslaan en de historie te bekijken.
+- `status_api_history_manage_capability` (string, standaard `manage_options`) — recht om de historie te exporteren en te wissen.
+- `status_api_allow_query_auth` (bool, standaard `true`) — authenticatie via `api_key`/`api_secret` in de URL toestaan. Bijv. `add_filter('status_api_allow_query_auth', '__return_false');`
 - `status_api_cache_control` (string, standaard `no-store, private`) — `Cache-Control` header van de status-response. Lege string = geen header.
 
 Voorbeeld (alleen gebruiken als élk verzoek via je eigen proxy binnenkomt):

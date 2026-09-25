@@ -12,6 +12,7 @@ class Status_API_Plugin {
     
     // API Manager, Status Manager en History Manager
     private $api_manager;
+    private $audit_log;
     public $status_manager;
     private $history_manager;
     
@@ -21,7 +22,8 @@ class Status_API_Plugin {
     private function __construct() {
         // Laad de managers (history eerst, die wordt gedeeld met de status manager)
         $this->history_manager = new Status_History_Manager();
-        $this->api_manager = new Status_API_Manager();
+        $this->audit_log = new Status_Audit_Log();
+        $this->api_manager = new Status_API_Manager($this->audit_log);
         $this->status_manager = new Status_Message_Manager($this->history_manager);
 
         // Voeg admin menu's toe
@@ -43,14 +45,35 @@ class Status_API_Plugin {
     }
     
     /**
+     * Capability voor het bekijken en opslaan van de statusmelding en het bekijken van de historie.
+     * Standaard 'edit_posts' (gedrag van vóór 0.9.9.4). Aan te passen via de filter
+     * 'status_api_status_capability', bijv. naar 'edit_others_posts' of 'manage_options'.
+     */
+    public static function get_status_capability() {
+        $capability = apply_filters('status_api_status_capability', 'edit_posts');
+        return (is_string($capability) && $capability !== '') ? $capability : 'edit_posts';
+    }
+
+    /**
+     * Capability voor het exporteren en wissen van de historie.
+     * Standaard 'manage_options'; aan te passen via 'status_api_history_manage_capability'.
+     */
+    public static function get_history_manage_capability() {
+        $capability = apply_filters('status_api_history_manage_capability', 'manage_options');
+        return (is_string($capability) && $capability !== '') ? $capability : 'manage_options';
+    }
+
+    /**
      * Voeg alle admin menu's toe in de juiste volgorde
      */
     public function add_admin_menus() {
+        $status_capability = self::get_status_capability();
+
         // Voeg hoofdmenu toe
         add_menu_page(
             'Status API',
             'Status API',
-            'edit_posts',
+            $status_capability,
             'status-api',
             array($this->status_manager, 'display_status_page'),
             'dashicons-database-view',
@@ -62,7 +85,7 @@ class Status_API_Plugin {
             'status-api',
             'Status Melding',
             'Status Melding',
-            'edit_posts',
+            $status_capability,
             'status-api',
             array($this->status_manager, 'display_status_page')
         );
@@ -72,7 +95,7 @@ class Status_API_Plugin {
             'status-api',
             'Status Historie',
             'Status Historie',
-            'edit_posts',
+            $status_capability,
             'status-api-history',
             array($this->history_manager, 'display_history_page')
         );
@@ -93,6 +116,7 @@ class Status_API_Plugin {
      */
     public function activate_plugin() {
         // Voer activatie taken uit voor alle managers
+        $this->audit_log->activate();
         $this->api_manager->activate();
         $this->status_manager->activate();
         $this->history_manager->activate();

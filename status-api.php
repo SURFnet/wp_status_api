@@ -2,7 +2,7 @@
 /**
  * Plugin Name: Status API
  * Description: Deze plugin maakt een API end-point aan voor het geven van storings informatie.
- * Version: 0.9.11
+ * Version: 0.9.12
  * Requires at least: 5.3
  * Requires PHP: 7.4
  * Author: Hanno-Wybren Mook
@@ -42,6 +42,7 @@ require_once __DIR__ . '/includes/class-status-api-plugin.php';
 require_once __DIR__ . '/includes/class-status-api-manager.php';
 require_once __DIR__ . '/includes/class-status-message-manager.php';
 require_once __DIR__ . '/includes/class-status-history-manager.php';
+require_once __DIR__ . '/includes/class-status-audit-log.php';
 
 // Start de plugin
 global $status_api_plugin;

@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.9.12
+
+Rechten, authenticatie en documentatie (backwards compatible: JSON-response, REST-route en beide authenticatiemethodes ongewijzigd):
+
+- Redacteuren (`edit_posts`) kunnen de statusmelding weer opslaan, zoals vóór 0.9.9.4; voorheen werd hun opslag stil genegeerd. Zonder recht volgt nu een duidelijke melding. Instelbaar via filter `status_api_status_capability`.
+- Historie exporteren/wissen blijft `manage_options` (filter `status_api_history_manage_capability`); de knoppen worden verborgen voor wie dat recht niet heeft.
+- Secret regenereren van een ingetrokken client: knoptekst "Regenereren & heractiveren" en een expliciete waarschuwing in de bevestiging (gedrag ongewijzigd).
+- Authenticatie via `api_key`/`api_secret` in de URL is gemarkeerd als verouderd: responses bevatten een `Deprecation` header (RFC 9745) en per client is zichtbaar welke methode recent is gebruikt. Standaard blijft de methode werken; uitzetten kan met filter `status_api_allow_query_auth`.
+- Documentatie verduidelijkt: na automatisch verlopen blijft de laatste vervaldatum in `statusExpiry*` staan terwijl `status` `"geen"` is.
+- Audit-log voor API clients: aanmaken, migreren, intrekken, secret regenereren, heractiveren en verwijderen worden vastgelegd (wie, wat, wanneer) in een eigen tabel `{prefix}status_api_audit`; zichtbaar in het nieuwe tabblad "Audit-log" onder API Instellingen. Secrets worden nooit gelogd, van de API key alleen de eerste 8 tekens. De statushistorie en CSV-export zijn ongewijzigd.
+- Kleurwaarden in de admin worden ge-escaped (`esc_attr`).
+- `composer.json`: plugin-update-checker `^5.7` (gelijk aan de al gebruikte versie in `composer.lock`).
+
 ## 0.9.11
 
 Robuustheid en onderhoud (backwards compatible: REST-route, JSON-velden, authenticatie, option-namen, klassenamen en `$status_api_plugin` ongewijzigd):

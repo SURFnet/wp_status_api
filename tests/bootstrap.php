@@ -14,6 +14,9 @@ ini_set('error_log', PHP_OS_FAMILY === 'Windows' ? 'NUL' : '/dev/null');
 $GLOBALS['wp_test'] = array();
 
 function wp_test_reset() {
+    if (isset($GLOBALS['wpdb'])) {
+        $GLOBALS['wpdb']->inserts = array();
+    }
     $GLOBALS['wp_test'] = array(
         'options' => array(),
         'transients' => array(),
@@ -24,6 +27,7 @@ function wp_test_reset() {
         'dbdelta' => array(),
         'doing_cron' => false,
         'queries' => array(),
+        'caps' => array(),
     );
     $_POST = array();
     $_GET = array();
@@ -82,6 +86,13 @@ function get_current_user_id() { return 1; }
 function wp_get_current_user() { return (object) array('display_name' => 'Tester', 'user_login' => 'tester'); }
 function plugins_url($path, $file) { return 'https://example.test/wp-content/plugins/wp_status_api/' . $path; }
 function plugin_dir_path($file) { return dirname($file) . '/'; }
+function current_user_can($capability) { return in_array($capability, $GLOBALS['wp_test']['caps'], true); }
+function wp_verify_nonce($nonce, $action) { return $nonce === 'valid'; }
+function add_query_arg($args, $url) { return $url . '?' . http_build_query($args); }
+function admin_url($path = '') { return 'https://example.test/wp-admin/' . $path; }
+class WP_Test_Exit extends Exception {}
+function wp_die($message = '', $title = '', $args = array()) { throw new WP_Test_Exit('die:' . $message); }
+function wp_safe_redirect($location) { throw new WP_Test_Exit('redirect:' . $location); }
 function dbDelta($sql) { $GLOBALS['wp_test']['dbdelta'][] = $sql; return array(); }
 
 class WP_Error {
@@ -122,6 +133,7 @@ class WP_Test_DB {
     public function get_charset_collate() { return 'DEFAULT CHARSET=utf8mb4'; }
     public function insert($table, $data, $format = null) { $this->inserts[] = array($table, $data); return 1; }
     public function query($sql) { $GLOBALS['wp_test']['queries'][] = $sql; return true; }
+    public function get_results($sql) { return array(); }
     public function prepare($query, ...$args) { return vsprintf(str_replace('%s', "'%s'", $query), $args); }
     public function esc_like($text) { return addcslashes($text, '_%\\'); }
 }
@@ -131,6 +143,7 @@ require dirname(__DIR__) . '/includes/class-status-api-plugin.php';
 require dirname(__DIR__) . '/includes/class-status-api-manager.php';
 require dirname(__DIR__) . '/includes/class-status-message-manager.php';
 require dirname(__DIR__) . '/includes/class-status-history-manager.php';
+require dirname(__DIR__) . '/includes/class-status-audit-log.php';
 
 // --- Mini test-framework
 $GLOBALS['wp_test_results'] = array('pass' => 0, 'fail' => 0);

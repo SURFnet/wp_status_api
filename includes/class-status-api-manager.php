@@ -12,14 +12,27 @@ class Status_API_Manager {
     private $api_secret_option = 'status_api_secret';
     private $api_clients_option = 'status_api_clients';
     private $api_clients_last_used_option = 'status_api_clients_last_used';
+    private $api_clients_auth_methods_option = 'status_api_clients_auth_methods';
 
     // Minimaal aantal seconden tussen twee updates van last_used_at per client
     const LAST_USED_THROTTLE = 300;
 
+    // Authenticatie via api_key/api_secret in de URL is verouderd sinds dit moment (2026-09-25 UTC).
+    // Wordt meegestuurd in de Deprecation header (RFC 9745).
+    const QUERY_AUTH_DEPRECATED_SINCE = 1790294400;
+
+    // Methode waarmee het huidige request is geauthenticeerd: 'query', 'bearer' of null
+    private $auth_method = null;
+
+    // Audit-log voor beheeracties op clients (geïnjecteerd door Status_API_Plugin)
+    private $audit_log = null;
+
     /**
      * Constructor
      */
-    public function __construct() {
+    public function __construct($audit_log = null) {
+        $this->audit_log = $audit_log;
+
         // Registreer API endpoints
         add_action('rest_api_init', array($this, 'register_api_endpoints'));
         
@@ -134,6 +147,42 @@ class Status_API_Manager {
      * gelijktijdige wijzigingen in de admin (zoals intrekken) kan overschrijven.
      * Wordt maximaal eens per LAST_USED_THROTTLE seconden per client geschreven.
      */
+    private function get_clients_auth_methods() {
+        $methods = get_option($this->api_clients_auth_methods_option, array());
+        return is_array($methods) ? $methods : array();
+    }
+
+    /**
+     * Onthoud per client wanneer welke authenticatiemethode ('query' of 'bearer') voor het
+     * laatst is gebruikt. Zo is te zien welke integraties nog URL-parameters gebruiken
+     * voordat die methode wordt uitgezet. Maximaal eens per LAST_USED_THROTTLE per methode.
+     */
+    private function touch_client_auth_method($api_key, $method) {
+        $now = time();
+        $throttle = (int) apply_filters('status_api_last_used_throttle', self::LAST_USED_THROTTLE);
+        $methods = $this->get_clients_auth_methods();
+        $previous = isset($methods[$api_key][$method]) ? (int) $methods[$api_key][$method] : 0;
+
+        if ($previous > 0 && ($now - $previous) < $throttle) {
+            return;
+        }
+
+        if (!isset($methods[$api_key]) || !is_array($methods[$api_key])) {
+            $methods[$api_key] = array();
+        }
+        $methods[$api_key][$method] = $now;
+        update_option($this->api_clients_auth_methods_option, $methods, false);
+    }
+
+    /**
+     * Mag authenticatie via api_key/api_secret in de URL (nog) worden gebruikt?
+     * Standaard ja (backwards compatible). Uitzetten met:
+     *     add_filter('status_api_allow_query_auth', '__return_false');
+     */
+    public function is_query_auth_allowed() {
+        return (bool) apply_filters('status_api_allow_query_auth', true);
+    }
+
     private function touch_client_last_used($api_key, $clients) {
         $now = time();
         $throttle = (int) apply_filters('status_api_last_used_throttle', self::LAST_USED_THROTTLE);
@@ -153,6 +202,18 @@ class Status_API_Manager {
             $clients = array();
         }
         update_option($this->api_clients_option, $clients);
+    }
+
+    /**
+     * Leg een beheeractie op een client vast in de audit-log.
+     * Valt terug op een eigen instantie als er geen is geïnjecteerd
+     * (bijv. bij `new Status_API_Manager()` vanuit externe code).
+     */
+    private function audit($event, $api_key, $label) {
+        if ($this->audit_log === null) {
+            $this->audit_log = new Status_Audit_Log();
+        }
+        $this->audit_log->log($event, $api_key, $label);
     }
 
     private function maybe_migrate_single_key_to_clients() {
@@ -178,6 +239,7 @@ class Status_API_Manager {
                 ),
             );
             $this->save_api_clients($clients);
+            $this->audit('client_migrated', $legacy_key, 'Legacy');
         }
     }
 
@@ -206,6 +268,7 @@ class Status_API_Manager {
         );
 
         $this->save_api_clients($clients);
+        $this->audit('client_created', $api_key, $label);
 
         // Houd legacy options gevuld met "eerste" client voor backwards-compat
         if (empty(get_option($this->api_key_option)) || empty(get_option($this->api_secret_option))) {
@@ -223,6 +286,7 @@ class Status_API_Manager {
         }
         $clients[$api_key]['revoked'] = true;
         $this->save_api_clients($clients);
+        $this->audit('client_revoked', $api_key, $clients[$api_key]['label']);
         return true;
     }
 
@@ -231,10 +295,12 @@ class Status_API_Manager {
         if (!isset($clients[$api_key])) {
             return false;
         }
+        $was_revoked = !empty($clients[$api_key]['revoked']);
         $clients[$api_key]['secret'] = wp_generate_password(64, false);
         $clients[$api_key]['revoked'] = false;
         $clients[$api_key]['secret_regenerated_at'] = time();
         $this->save_api_clients($clients);
+        $this->audit($was_revoked ? 'client_reactivated' : 'client_secret_regenerated', $api_key, $clients[$api_key]['label']);
 
         // Houd legacy options in sync zodat er geen verouderd secret achterblijft
         if (get_option($this->api_key_option) === $api_key) {
@@ -252,13 +318,21 @@ class Status_API_Manager {
         if (empty($clients[$api_key]['revoked'])) {
             return false;
         }
+        $label = $clients[$api_key]['label'];
         unset($clients[$api_key]);
         $this->save_api_clients($clients);
+        $this->audit('client_deleted', $api_key, $label);
 
         $last_used = $this->get_clients_last_used();
         if (isset($last_used[$api_key])) {
             unset($last_used[$api_key]);
             update_option($this->api_clients_last_used_option, $last_used, false);
+        }
+
+        $methods = $this->get_clients_auth_methods();
+        if (isset($methods[$api_key])) {
+            unset($methods[$api_key]);
+            update_option($this->api_clients_auth_methods_option, $methods, false);
         }
 
         // Verwijder legacy options als die naar deze (verwijderde) client wezen
@@ -374,9 +448,11 @@ class Status_API_Manager {
     public function display_settings_page() {
         $this->maybe_migrate_single_key_to_clients();
         $clients = $this->get_api_clients();
+        $auth_methods = $this->get_clients_auth_methods();
+        $query_auth_allowed = $this->is_query_auth_allowed();
 
         $active_tab = isset($_GET['tab']) ? sanitize_key($_GET['tab']) : 'clients';
-        if (!in_array($active_tab, array('clients', 'docs'), true)) {
+        if (!in_array($active_tab, array('clients', 'audit', 'docs'), true)) {
             $active_tab = 'clients';
         }
 
@@ -409,6 +485,12 @@ class Status_API_Manager {
                 >
                     Documentatie
                 </a>
+                <a
+                    href="<?php echo esc_url(add_query_arg(array('page' => 'status-api-settings', 'tab' => 'audit'), admin_url('admin.php'))); ?>"
+                    class="nav-tab <?php echo $active_tab === 'audit' ? 'nav-tab-active' : ''; ?>"
+                >
+                    Audit-log
+                </a>
             </h2>
             
             <?php if (isset($_GET['message']) && $_GET['message'] === 'client_created') : ?>
@@ -421,7 +503,7 @@ class Status_API_Manager {
                 </div>
             <?php elseif (isset($_GET['message']) && $_GET['message'] === 'client_secret_regenerated') : ?>
                 <div class="notice notice-success is-dismissible">
-                    <p>Client secret opnieuw gegenereerd!</p>
+                    <p>Client secret opnieuw gegenereerd! De client is (weer) actief; het oude secret en de oude Bearer token werken niet meer.</p>
                 </div>
             <?php elseif (isset($_GET['message']) && $_GET['message'] === 'client_deleted') : ?>
                 <div class="notice notice-success is-dismissible">
@@ -537,8 +619,9 @@ class Status_API_Manager {
                                                 </div>
                                             </div>
                                         </div>
+                                        <?php if ($query_auth_allowed) : ?>
                                         <div>
-                                            <div class="status-api-muted"><span class="status-api-label"><span class="dashicons dashicons-admin-links"></span><strong>Open endpoint</strong></span></div>
+                                            <div class="status-api-muted"><span class="status-api-label"><span class="dashicons dashicons-admin-links"></span><strong>Open endpoint</strong> <span title="Bevat het secret in de URL; gebruik bij voorkeur de Bearer token">(verouderd)</span></span></div>
                                             <div class="status-api-field">
                                                 <button type="button" class="button status-api-toggle" data-toggle-target="<?php echo esc_attr($id_url_wrap); ?>">
                                                     <span class="dashicons dashicons-visibility"></span>
@@ -556,6 +639,7 @@ class Status_API_Manager {
                                                 </div>
                                             </div>
                                         </div>
+                                        <?php endif; ?>
                                     </td>
                                     <td>
                                         <?php if ($is_revoked) : ?>
@@ -579,15 +663,26 @@ class Status_API_Manager {
                                                 Laatst gebruikt: <?php echo esc_html(date_i18n('Y-m-d H:i', (int)$client['last_used_at'])); ?>
                                             </div>
                                         <?php endif; ?>
+                                        <?php if (!empty($auth_methods[$client_key]['bearer'])) : ?>
+                                            <div class="status-api-muted" style="margin-top: 6px;">
+                                                Bearer token: <?php echo esc_html(date_i18n('Y-m-d H:i', (int) $auth_methods[$client_key]['bearer'])); ?>
+                                            </div>
+                                        <?php endif; ?>
+                                        <?php if (!empty($auth_methods[$client_key]['query'])) : ?>
+                                            <div style="margin-top: 6px; color: #996800;">
+                                                <span class="dashicons dashicons-warning" style="font-size: 16px; width: 16px; height: 16px;"></span>
+                                                URL-parameters (verouderd): <?php echo esc_html(date_i18n('Y-m-d H:i', (int) $auth_methods[$client_key]['query'])); ?>
+                                            </div>
+                                        <?php endif; ?>
                                     </td>
                                     <td>
                                         <div class="status-api-actions">
-                                            <form method="post" action="" data-status-api-confirm="Weet je zeker dat je het secret van &quot;<?php echo esc_attr($client['label']); ?>&quot; wilt regenereren? Het huidige secret, de Bearer token en de Open endpoint URL werken daarna direct niet meer.">
+                                            <form method="post" action="" data-status-api-confirm="Weet je zeker dat je het secret van &quot;<?php echo esc_attr($client['label']); ?>&quot; wilt regenereren? Het huidige secret, de Bearer token en de Open endpoint URL werken daarna direct niet meer.<?php echo $is_revoked ? esc_attr("\n\nLet op: deze client is ingetrokken. Regenereren maakt hem weer ACTIEF met het nieuwe secret.") : ''; ?>">
                                                 <?php wp_nonce_field('regenerate_client_secret', 'regenerate_client_secret_nonce'); ?>
                                                 <input type="hidden" name="client_key" value="<?php echo esc_attr($client_key); ?>" />
                                                 <button type="submit" name="regenerate_client_secret" class="button">
                                                     <span class="dashicons dashicons-update"></span>
-                                                    Secret regenereren
+                                                    <?php echo $is_revoked ? 'Regenereren &amp; heractiveren' : 'Secret regenereren'; ?>
                                                 </button>
                                             </form>
                                             <form method="post" action="" data-status-api-confirm="Weet je zeker dat je &quot;<?php echo esc_attr($client['label']); ?>&quot; wilt intrekken? Deze client heeft daarna direct geen toegang meer.">
@@ -617,6 +712,44 @@ class Status_API_Manager {
                     </tbody>
                 </table>
 
+            <?php elseif ($active_tab === 'audit') : ?>
+                <?php
+                    if ($this->audit_log === null) {
+                        $this->audit_log = new Status_Audit_Log();
+                    }
+                    $audit_entries = $this->audit_log->get_entries(100);
+                ?>
+                <h2>Audit-log API clients</h2>
+                <p class="status-api-muted">
+                    De laatste 100 beheeracties op API clients. Secrets worden nooit gelogd; van de API key alleen de eerste
+                    <?php echo (int) Status_Audit_Log::KEY_PREFIX_LENGTH; ?> tekens. Acties van vóór versie 0.9.12 zijn niet vastgelegd.
+                </p>
+                <?php if (empty($audit_entries)) : ?>
+                    <p>Er zijn nog geen acties vastgelegd.</p>
+                <?php else : ?>
+                    <table class="widefat striped" style="max-width: 1400px;">
+                        <thead>
+                            <tr>
+                                <th style="width: 150px;">Datum/Tijd</th>
+                                <th>Actie</th>
+                                <th>Client</th>
+                                <th style="width: 140px;">API key</th>
+                                <th style="width: 180px;">Door</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <?php foreach ($audit_entries as $entry) : ?>
+                                <tr>
+                                    <td><?php echo esc_html(date_i18n('Y-m-d H:i', strtotime($entry->event_date))); ?></td>
+                                    <td><?php echo esc_html(Status_Audit_Log::get_event_label($entry->event)); ?></td>
+                                    <td><?php echo esc_html($entry->client_label); ?></td>
+                                    <td><code><?php echo esc_html($entry->client_key_prefix); ?>…</code></td>
+                                    <td><?php echo esc_html($entry->changed_by); ?></td>
+                                </tr>
+                            <?php endforeach; ?>
+                        </tbody>
+                    </table>
+                <?php endif; ?>
             <?php else : ?>
                 <h2>API Documentatie</h2>
                 <p>De Status API biedt toegang tot de huidige status via het volgende endpoint:</p>
@@ -624,8 +757,8 @@ class Status_API_Manager {
                 <h3>Huidige status ophalen</h3>
                 <p>Endpoint: <code><?php echo esc_html(site_url('/wp-json/status-api/v1/status')); ?></code></p>
                 <p>Methode: <code>GET</code></p>
-                <p>Authenticatie: Bearer token (aanbevolen) of API sleutel/secret.</p>
-                <p>Tip: ga naar het tabblad “API clients” en kopieer daar de Bearer token of de “Open endpoint” URL.</p>
+                <p>Authenticatie: Bearer token (aanbevolen) of API sleutel/secret in de URL (verouderd).</p>
+                <p>Tip: ga naar het tabblad “API clients” en kopieer daar de Bearer token.</p>
                 <h4>Response formaat:</h4>
                 <pre>
 {
@@ -634,13 +767,18 @@ class Status_API_Manager {
     "baseURL": "<?php echo esc_html(site_url()); ?>",
     "status": "geen|green|orange|red",
     "timestamp": 1234567890,
-    "statusExpiryDate": "2025-12-31 23:59" (alleen bij groene status met vervaldatum),
-    "statusExpiryTimestamp": 1234567890 (alleen bij groene status met vervaldatum),
+    "statusExpiryDate": "2025-12-31 23:59" (of null),
+    "statusExpiryTimestamp": 1234567890 (of null),
     "timestampUtc": 1234567890,
     "statusExpiryTimestampUtc": 1234567890 (of null),
     "statusExpiryIso8601": "2025-12-31T23:59:00+01:00" (of null)
 }
                 </pre>
+                <p class="description">
+                    <strong>Vervaldatum:</strong> de <code>statusExpiry*</code> velden zijn gevuld zodra er bij een groene status een vervaldatum is ingesteld.
+                    Na het automatisch verlopen wordt <code>status</code> <code>"geen"</code>, maar blijft de laatst ingestelde vervaldatum zichtbaar
+                    (ter informatie: tot wanneer de vorige melding gold). Controleer dus altijd eerst <code>status</code>.
+                </p>
                 <p class="description">
                     <strong>Let op tijdzones:</strong> <code>timestamp</code> en <code>statusExpiryTimestamp</code> zijn om historische redenen
                     de lokale sitetijd (<?php echo esc_html(wp_timezone_string()); ?>) weergegeven als Unix-timestamp en wijken dus af van echte UTC-tijd.
@@ -655,7 +793,15 @@ class Status_API_Manager {
 Authorization: Bearer <?php echo esc_html($example_bearer_token); ?>
                 </pre>
                 
-                <h4>Methode 2: API Sleutel en Secret</h4>
+                <h4>Methode 2: API Sleutel en Secret (verouderd)</h4>
+                <?php if (!$query_auth_allowed) : ?>
+                    <div class="notice notice-warning inline"><p>Deze methode is op deze site <strong>uitgeschakeld</strong> (filter <code>status_api_allow_query_auth</code>). Gebruik de Bearer token.</p></div>
+                <?php endif; ?>
+                <p>
+                    Het secret staat bij deze methode in de URL en belandt daardoor in access-logs, proxy-logs en browsergeschiedenis.
+                    Responses op zulke verzoeken bevatten een <code>Deprecation</code> header. Stap bij voorkeur over op de Bearer token;
+                    in het tabblad “API clients” zie je per client welke methode recent is gebruikt.
+                </p>
                 <p>Voeg de volgende parameters toe aan je aanvraag:</p>
                 <pre>
 api_key=<?php echo esc_html($example_key); ?>&api_secret=<?php echo esc_html($example_secret); ?>
@@ -792,14 +938,17 @@ Bearer Token: base64_encode(api_key + ':' + hmac_signature)
     public function check_api_authentication($request) {
         $this->maybe_migrate_single_key_to_clients();
         $clients = $this->get_api_clients();
+        $this->auth_method = null;
 
-        // METHODE 1: Check voor API key en secret in query parameters
+        // METHODE 1: Check voor API key en secret in query parameters (verouderd, standaard nog toegestaan)
         $api_key = $request->get_param('api_key');
         $api_secret = $request->get_param('api_secret');
 
-        if (is_string($api_key) && is_string($api_secret) && $api_key !== '' && $api_secret !== '') {
+        if ($this->is_query_auth_allowed() && is_string($api_key) && is_string($api_secret) && $api_key !== '' && $api_secret !== '') {
             if (isset($clients[$api_key]) && empty($clients[$api_key]['revoked']) && hash_equals($clients[$api_key]['secret'], $api_secret)) {
                 $this->touch_client_last_used($api_key, $clients);
+                $this->touch_client_auth_method($api_key, 'query');
+                $this->auth_method = 'query';
                 return true;
             }
         }
@@ -813,6 +962,8 @@ Bearer Token: base64_encode(api_key + ':' + hmac_signature)
             $client_key = $this->validate_bearer_token_multi($token, $clients);
             if ($client_key !== false) {
                 $this->touch_client_last_used($client_key, $clients);
+                $this->touch_client_auth_method($client_key, 'bearer');
+                $this->auth_method = 'bearer';
                 return true;
             }
         }
@@ -905,6 +1056,12 @@ Bearer Token: base64_encode(api_key + ':' + hmac_signature)
         $cache_control = apply_filters('status_api_cache_control', 'no-store, private');
         if (is_string($cache_control) && $cache_control !== '' && method_exists($response, 'header')) {
             $response->header('Cache-Control', $cache_control);
+        }
+
+        // Signaleer aan de afnemer dat authenticatie via URL-parameters verouderd is (RFC 9745).
+        // Clients die de header niet kennen negeren hem; de response zelf is ongewijzigd.
+        if ($this->auth_method === 'query' && method_exists($response, 'header')) {
+            $response->header('Deprecation', '@' . self::QUERY_AUTH_DEPRECATED_SINCE);
         }
 
         return $response;

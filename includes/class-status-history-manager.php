@@ -115,7 +115,7 @@ class Status_History_Manager {
         if (!isset($_GET['page']) || $_GET['page'] !== 'status-api-history') {
             return;
         }
-        if (!current_user_can('manage_options')) {
+        if (!current_user_can(Status_API_Plugin::get_history_manage_capability())) {
             return;
         }
         
@@ -263,6 +263,7 @@ class Status_History_Manager {
             
             <p>Overzicht van alle statuswijzigingen en updates.</p>
             
+            <?php if (current_user_can(Status_API_Plugin::get_history_manage_capability())) : ?>
             <div style="margin-bottom: 20px;">
                 <form method="post" style="display: inline-block;">
                     <?php wp_nonce_field('export_history', 'export_history_nonce'); ?>
@@ -282,6 +283,7 @@ class Status_History_Manager {
                 </form>
                 <?php endif; ?>
             </div>
+            <?php endif; ?>
             
             <?php if (empty($history)) : ?>
                 <p>Er zijn nog geen statuswijzigingen gelogd.</p>
@@ -304,7 +306,7 @@ class Status_History_Manager {
                         <tr>
                             <td><?php echo esc_html(date_i18n('j M Y H:i', strtotime($entry->change_date))); ?></td>
                             <td>
-                                <span style="display:inline-block; width:12px; height:12px; background-color:<?php echo $status_info['color']; ?>; margin-right:5px; border-radius:50%;"></span>
+                                <span style="display:inline-block; width:12px; height:12px; background-color:<?php echo esc_attr($status_info['color']); ?>; margin-right:5px; border-radius:50%;"></span>
                                 <?php echo esc_html($status_info['label']); ?>
                             </td>
                             <td>

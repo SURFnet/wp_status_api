@@ -23,6 +23,7 @@ if ($scenario !== 'keep') {
 update_option('status_api_clients', array('k' => array('secret' => 's')));
 update_option('status_message_data', array('status' => 'red'));
 update_option('status_api_db_version', '1.0');
+update_option('status_api_audit_db_version', '1.0');
 
 require dirname(__DIR__) . '/uninstall.php';
 
@@ -39,6 +40,8 @@ if ($scenario === 'keep') {
     check('delete: status verwijderd', get_option('status_message_data') === false);
     check('delete: db-versie verwijderd', get_option('status_api_db_version') === false);
     check('delete: tabel gedropt', strpos($queries, 'DROP TABLE IF EXISTS wp_status_api_history') !== false);
+    check('delete: audit-tabel gedropt', strpos($queries, 'DROP TABLE IF EXISTS wp_status_api_audit') !== false);
+    check('delete: audit db-versie verwijderd', get_option('status_api_audit_db_version') === false);
     check('delete: rate-limit transients opgeruimd', strpos($queries, 'status\\_api\\_auth\\_fails\\_') !== false);
 } else {
     check('multisite: alle sites doorlopen', $GLOBALS['switched'] === array(1, 2));

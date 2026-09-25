@@ -195,12 +195,14 @@ class Status_Message_Manager {
         if (!isset($_GET['page']) || $_GET['page'] !== 'status-api') {
             return;
         }
-        if (!current_user_can('manage_options')) {
-            return;
-        }
         
         // Verwerk status formulier
         if (isset($_POST['status_action']) && $_POST['status_action'] === 'save') {
+            // Zelfde recht als voor het bekijken van de pagina (standaard edit_posts)
+            if (!current_user_can(Status_API_Plugin::get_status_capability())) {
+                wp_die('Je hebt geen rechten om de statusmelding te wijzigen.', 'Geen toegang', array('response' => 403));
+            }
+
             // Controleer nonce
             if (!isset($_POST['status_nonce']) || !wp_verify_nonce($_POST['status_nonce'], 'save_status')) {
                 wp_die('Beveiligingscontrole mislukt. Probeer het opnieuw.');
@@ -459,10 +461,10 @@ class Status_Message_Manager {
             <div class="card" style="padding: 20px;">
                 <h2>Huidige Status</h2>
                 
-                <div style="margin-bottom: 20px; background-color: <?php echo $status_info['bg_color']; ?>; padding: 15px; border-radius: 5px;">
+                <div style="margin-bottom: 20px; background-color: <?php echo esc_attr($status_info['bg_color']); ?>; padding: 15px; border-radius: 5px;">
                     <div style="margin-bottom: 10px;">
                         <strong>Status:</strong> 
-                        <span style="display:inline-block; width:12px; height:12px; background-color:<?php echo $status_info['color']; ?>; margin-right:5px; border-radius:50%;"></span>
+                        <span style="display:inline-block; width:12px; height:12px; background-color:<?php echo esc_attr($status_info['color']); ?>; margin-right:5px; border-radius:50%;"></span>
                         <?php echo esc_html($status_info['label']); ?>
                     </div>
                     
@@ -475,7 +477,7 @@ class Status_Message_Manager {
                     <?php endif; ?>
                     
                     <?php if (!empty($title)) : ?>
-                        <h3 style="color: <?php echo $status_info['color']; ?>; margin-top: 15px; margin-bottom: 10px;"><?php echo esc_html($title); ?></h3>
+                        <h3 style="color: <?php echo esc_attr($status_info['color']); ?>; margin-top: 15px; margin-bottom: 10px;"><?php echo esc_html($title); ?></h3>
                     <?php endif; ?>
                     
                     <?php if (!empty($content)) : ?>

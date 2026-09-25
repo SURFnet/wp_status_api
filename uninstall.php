@@ -31,9 +31,11 @@ function status_api_uninstall_site($delete_data) {
         'status_api_secret',
         'status_api_clients',
         'status_api_clients_last_used',
+        'status_api_clients_auth_methods',
         'status_message_data',
         'status_last_expiry_check',
         'status_api_db_version',
+        'status_api_audit_db_version',
     );
     foreach ($options as $option) {
         delete_option($option);
@@ -50,8 +52,10 @@ function status_api_uninstall_site($delete_data) {
         ));
     }
 
-    $table = $wpdb->prefix . 'status_api_history';
-    $wpdb->query("DROP TABLE IF EXISTS {$table}");
+    foreach (array('status_api_history', 'status_api_audit') as $table_suffix) {
+        $table = $wpdb->prefix . $table_suffix;
+        $wpdb->query("DROP TABLE IF EXISTS {$table}");
+    }
 }
 
 $status_api_delete_data = defined('STATUS_API_DELETE_DATA_ON_UNINSTALL') && STATUS_API_DELETE_DATA_ON_UNINSTALL;
