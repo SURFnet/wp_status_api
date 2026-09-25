@@ -31,6 +31,32 @@ curl -H "Authorization: Bearer <TOKEN>" \
 - `timestamp` (int)
 - `statusExpiryDate` (string|null)
 - `statusExpiryTimestamp` (int|null)
+- `timestampUtc` (int) — sinds 0.9.10
+- `statusExpiryTimestampUtc` (int|null) — sinds 0.9.10
+- `statusExpiryIso8601` (string|null) — sinds 0.9.10, bijv. `2025-12-31T23:59:00+01:00`
+
+Let op: `timestamp` en `statusExpiryTimestamp` zijn om historische redenen de lokale sitetijd weergegeven als Unix-timestamp (wijken af van UTC). Gebruik voor nieuwe integraties de `*Utc`/`*Iso8601` velden.
+
+## Filters
+
+- `status_api_client_ip` (string `$ip`, `WP_REST_Request $request`) — bepaal het client-IP voor rate limiting, bijv. achter een vertrouwde reverse proxy. Standaard `REMOTE_ADDR`.
+- `status_api_auth_rate_limit_max_attempts` (int, standaard 20) — aantal mislukte pogingen per IP binnen het venster.
+- `status_api_auth_rate_limit_window` (int seconden, standaard 900).
+- `status_api_last_used_throttle` (int seconden, standaard 300) — hoe vaak "Laatst gebruikt" maximaal wordt bijgewerkt.
+
+Voorbeeld (alleen gebruiken als élk verzoek via je eigen proxy binnenkomt):
+
+```php
+add_filter('status_api_client_ip', function ($ip) {
+    if (!empty($_SERVER['HTTP_X_FORWARDED_FOR'])) {
+        // Neem het laatste adres: dat is door je eigen proxy toegevoegd.
+        // Het eerste adres kan door de client zelf worden vervalst.
+        $parts = explode(',', $_SERVER['HTTP_X_FORWARDED_FOR']);
+        return trim(end($parts));
+    }
+    return $ip;
+});
+```
 
 ## Development
 

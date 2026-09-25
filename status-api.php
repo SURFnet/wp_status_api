@@ -2,7 +2,7 @@
 /**
  * Plugin Name: Status API
  * Description: Deze plugin maakt een API end-point aan voor het geven van storings informatie.
- * Version: 0.9.9.5
+ * Version: 0.9.10
  * Author: Hanno-Wybren Mook
  * License: Proprietary
  */
@@ -148,7 +148,11 @@ class Status_API_Manager {
     private $api_key_option = 'status_api_key';
     private $api_secret_option = 'status_api_secret';
     private $api_clients_option = 'status_api_clients';
-    
+    private $api_clients_last_used_option = 'status_api_clients_last_used';
+
+    // Minimaal aantal seconden tussen twee updates van last_used_at per client
+    const LAST_USED_THROTTLE = 300;
+
     /**
      * Constructor
      */
@@ -217,7 +221,41 @@ class Status_API_Manager {
             ));
         }
 
+        // last_used_at wordt apart bijgehouden (zie touch_client_last_used), neem de meest recente waarde
+        $last_used = $this->get_clients_last_used();
+        foreach ($last_used as $key => $timestamp) {
+            if (isset($clients[$key]) && (int) $timestamp > (int) $clients[$key]['last_used_at']) {
+                $clients[$key]['last_used_at'] = (int) $timestamp;
+            }
+        }
+
         return $clients;
+    }
+
+    private function get_clients_last_used() {
+        $last_used = get_option($this->api_clients_last_used_option, array());
+        return is_array($last_used) ? $last_used : array();
+    }
+
+    /**
+     * Werk last_used_at van een client bij.
+     *
+     * Wordt apart van de clients option opgeslagen, zodat een API request nooit
+     * gelijktijdige wijzigingen in de admin (zoals intrekken) kan overschrijven.
+     * Wordt maximaal eens per LAST_USED_THROTTLE seconden per client geschreven.
+     */
+    private function touch_client_last_used($api_key, $clients) {
+        $now = time();
+        $throttle = (int) apply_filters('status_api_last_used_throttle', self::LAST_USED_THROTTLE);
+        $previous = isset($clients[$api_key]['last_used_at']) ? (int) $clients[$api_key]['last_used_at'] : 0;
+
+        if ($previous > 0 && ($now - $previous) < $throttle) {
+            return;
+        }
+
+        $last_used = $this->get_clients_last_used();
+        $last_used[$api_key] = $now;
+        update_option($this->api_clients_last_used_option, $last_used, false);
     }
 
     private function save_api_clients($clients) {
@@ -228,8 +266,10 @@ class Status_API_Manager {
     }
 
     private function maybe_migrate_single_key_to_clients() {
-        $clients = $this->get_api_clients();
-        if (!empty($clients)) {
+        // Migreer alleen als de clients option nog nooit heeft bestaan (sites van vóór 0.9.9).
+        // Een lege lijst betekent dat alle clients bewust zijn verwijderd; die mogen niet
+        // terugkomen via de legacy options.
+        if (get_option($this->api_clients_option, false) !== false) {
             return;
         }
 
@@ -305,6 +345,12 @@ class Status_API_Manager {
         $clients[$api_key]['revoked'] = false;
         $clients[$api_key]['secret_regenerated_at'] = time();
         $this->save_api_clients($clients);
+
+        // Houd legacy options in sync zodat er geen verouderd secret achterblijft
+        if (get_option($this->api_key_option) === $api_key) {
+            update_option($this->api_secret_option, $clients[$api_key]['secret']);
+        }
+
         return $clients[$api_key]['secret'];
     }
 
@@ -318,6 +364,19 @@ class Status_API_Manager {
         }
         unset($clients[$api_key]);
         $this->save_api_clients($clients);
+
+        $last_used = $this->get_clients_last_used();
+        if (isset($last_used[$api_key])) {
+            unset($last_used[$api_key]);
+            update_option($this->api_clients_last_used_option, $last_used, false);
+        }
+
+        // Verwijder legacy options als die naar deze (verwijderde) client wezen
+        if (get_option($this->api_key_option) === $api_key) {
+            delete_option($this->api_key_option);
+            delete_option($this->api_secret_option);
+        }
+
         return true;
     }
     
@@ -336,7 +395,7 @@ class Status_API_Manager {
         // Nieuwe client aanmaken
         if (isset($_POST['create_client']) && isset($_POST['create_client_nonce']) &&
             wp_verify_nonce($_POST['create_client_nonce'], 'create_client')) {
-            $label = isset($_POST['client_label']) ? sanitize_text_field($_POST['client_label']) : 'Client';
+            $label = isset($_POST['client_label']) ? sanitize_text_field(wp_unslash($_POST['client_label'])) : 'Client';
             $this->create_api_client($label);
 
             wp_redirect(add_query_arg(
@@ -353,7 +412,7 @@ class Status_API_Manager {
         // Client intrekken
         if (isset($_POST['revoke_client']) && isset($_POST['revoke_client_nonce']) &&
             wp_verify_nonce($_POST['revoke_client_nonce'], 'revoke_client')) {
-            $api_key = isset($_POST['client_key']) ? sanitize_text_field($_POST['client_key']) : '';
+            $api_key = isset($_POST['client_key']) ? sanitize_text_field(wp_unslash($_POST['client_key'])) : '';
             if ($api_key !== '') {
                 $this->revoke_api_client($api_key);
             }
@@ -372,7 +431,7 @@ class Status_API_Manager {
         // Client secret regenereren
         if (isset($_POST['regenerate_client_secret']) && isset($_POST['regenerate_client_secret_nonce']) &&
             wp_verify_nonce($_POST['regenerate_client_secret_nonce'], 'regenerate_client_secret')) {
-            $api_key = isset($_POST['client_key']) ? sanitize_text_field($_POST['client_key']) : '';
+            $api_key = isset($_POST['client_key']) ? sanitize_text_field(wp_unslash($_POST['client_key'])) : '';
             if ($api_key !== '') {
                 $this->regenerate_api_client_secret($api_key);
             }
@@ -391,7 +450,7 @@ class Status_API_Manager {
         // Client verwijderen (alleen als hij al ingetrokken is)
         if (isset($_POST['delete_client']) && isset($_POST['delete_client_nonce']) &&
             wp_verify_nonce($_POST['delete_client_nonce'], 'delete_client')) {
-            $api_key = isset($_POST['client_key']) ? sanitize_text_field($_POST['client_key']) : '';
+            $api_key = isset($_POST['client_key']) ? sanitize_text_field(wp_unslash($_POST['client_key'])) : '';
             if ($api_key !== '') {
                 $this->delete_api_client($api_key);
             }
@@ -755,9 +814,17 @@ class Status_API_Manager {
     "status": "geen|green|orange|red",
     "timestamp": 1234567890,
     "statusExpiryDate": "2025-12-31 23:59" (alleen bij groene status met vervaldatum),
-    "statusExpiryTimestamp": 1234567890 (alleen bij groene status met vervaldatum)
+    "statusExpiryTimestamp": 1234567890 (alleen bij groene status met vervaldatum),
+    "timestampUtc": 1234567890,
+    "statusExpiryTimestampUtc": 1234567890 (of null),
+    "statusExpiryIso8601": "2025-12-31T23:59:00+01:00" (of null)
 }
                 </pre>
+                <p class="description">
+                    <strong>Let op tijdzones:</strong> <code>timestamp</code> en <code>statusExpiryTimestamp</code> zijn om historische redenen
+                    de lokale sitetijd (<?php echo esc_html(wp_timezone_string()); ?>) weergegeven als Unix-timestamp en wijken dus af van echte UTC-tijd.
+                    Gebruik voor nieuwe integraties <code>timestampUtc</code>, <code>statusExpiryTimestampUtc</code> en <code>statusExpiryIso8601</code>.
+                </p>
                 
                 <h3>Authenticatie voorbeelden</h3>
                 
@@ -793,7 +860,7 @@ fetch('<?php echo esc_js(site_url('/wp-json/status-api/v1/status')); ?>', {
                 </pre>
             
             <h2>Bearer Token Beveiliging</h2>
-            <p>De Bearer token wordt gegenereerd met <strong>HMAC-SHA256</strong> voor maximale beveiliging:</p>
+            <p>De Bearer token wordt afgeleid met <strong>HMAC-SHA256</strong>:</p>
             
             <div style="background-color: #f5f5f5; padding: 15px; border-radius: 5px; margin: 20px 0;">
                 <h4 style="margin-top: 0;">Hoe de Bearer token wordt gegenereerd:</h4>
@@ -814,18 +881,18 @@ fetch('<?php echo esc_js(site_url('/wp-json/status-api/v1/status')); ?>', {
                     </li>
                 </ol>
                 
-                <h4>Waarom is dit veilig?</h4>
+                <h4>Wat biedt dit wel en niet?</h4>
                 <ul>
-                    <li><strong>Cryptografisch sterk</strong>: SHA-256 is een bewezen veilig hash-algoritme</li>
-                    <li><strong>Geheim-afhankelijk</strong>: Alleen met het juiste API Secret kan de correcte signature worden gegenereerd</li>
-                    <li><strong>Tamper-proof</strong>: Elke wijziging in de API key resulteert in een compleet andere signature</li>
-                    <li><strong>Niet-omkeerbaar</strong>: Het is onmogelijk om van de token terug te rekenen naar het API Secret</li>
+                    <li><strong>Secret blijft geheim</strong>: de token bevat het API Secret niet; alleen met het juiste secret kan de correcte signature worden gemaakt.</li>
+                    <li><strong>Niet-omkeerbaar</strong>: uit de token is het API Secret niet terug te rekenen.</li>
+                    <li><strong>Statisch</strong>: de token verandert niet per verzoek (geen tijdstempel of nonce). Wie de token onderschept kan hem hergebruiken tot het secret wordt geregenereerd of de client wordt ingetrokken. Behandel de token dus als een wachtwoord en gebruik altijd HTTPS.</li>
+                    <li><strong>Rotatie</strong>: na &ldquo;Secret regenereren&rdquo; is de oude token direct ongeldig.</li>
                 </ul>
                 
                 <h4>Voorbeeld berekening:</h4>
                 <pre style="background-color: #fff; padding: 10px; border: 1px solid #ddd;">
-API Sleutel: <?php echo substr(esc_html($example_key), 0, 16); ?>... (verkort voor veiligheid)
-API Secret: <?php echo substr(esc_html($example_secret), 0, 16); ?>... (verkort voor veiligheid)
+API Sleutel: <?php echo esc_html(substr($example_key, 0, 16)); ?>... (verkort voor veiligheid)
+API Secret: <?php echo esc_html(substr($example_secret, 0, 16)); ?>... (verkort voor veiligheid)
 
 HMAC-SHA256: hash_hmac('sha256', api_key, api_secret)
 Resultaat: [64 karakters hex]
@@ -856,10 +923,25 @@ Bearer Token: base64_encode(api_key + ':' + hmac_signature)
     const AUTH_RATE_LIMIT_WINDOW = 900; // 15 minuten
 
     /**
-     * Haal het IP-adres van de aanvrager op
+     * Haal het IP-adres van de aanvrager op.
+     *
+     * Standaard REMOTE_ADDR. Achter een vertrouwde reverse proxy / load balancer kan het
+     * echte client-IP via de filter 'status_api_client_ip' worden aangeleverd. Vertrouw
+     * proxy-headers (zoals X-Forwarded-For) alleen als het verzoek van je eigen proxy komt.
      */
-    private function get_client_ip() {
-        return isset($_SERVER['REMOTE_ADDR']) ? sanitize_text_field($_SERVER['REMOTE_ADDR']) : 'unknown';
+    private function get_client_ip($request = null) {
+        $ip = isset($_SERVER['REMOTE_ADDR']) ? sanitize_text_field(wp_unslash($_SERVER['REMOTE_ADDR'])) : '';
+        $ip = apply_filters('status_api_client_ip', $ip, $request);
+
+        return (is_string($ip) && filter_var($ip, FILTER_VALIDATE_IP)) ? $ip : 'unknown';
+    }
+
+    private function get_rate_limit_max_attempts() {
+        return max(1, (int) apply_filters('status_api_auth_rate_limit_max_attempts', self::AUTH_RATE_LIMIT_MAX_ATTEMPTS));
+    }
+
+    private function get_rate_limit_window() {
+        return max(1, (int) apply_filters('status_api_auth_rate_limit_window', self::AUTH_RATE_LIMIT_WINDOW));
     }
 
     /**
@@ -867,7 +949,7 @@ Bearer Token: base64_encode(api_key + ':' + hmac_signature)
      */
     private function is_rate_limited($ip) {
         $attempts = (int) get_transient('status_api_auth_fails_' . md5($ip));
-        return $attempts >= self::AUTH_RATE_LIMIT_MAX_ATTEMPTS;
+        return $attempts >= $this->get_rate_limit_max_attempts();
     }
 
     /**
@@ -876,30 +958,17 @@ Bearer Token: base64_encode(api_key + ':' + hmac_signature)
     private function record_auth_failure($ip) {
         $transient_key = 'status_api_auth_fails_' . md5($ip);
         $attempts = (int) get_transient($transient_key);
-        set_transient($transient_key, $attempts + 1, self::AUTH_RATE_LIMIT_WINDOW);
-    }
-
-    /**
-     * Wis eventuele mislukte pogingen na een succesvolle authenticatie
-     */
-    private function clear_auth_failures($ip) {
-        delete_transient('status_api_auth_fails_' . md5($ip));
+        set_transient($transient_key, $attempts + 1, $this->get_rate_limit_window());
     }
 
     /**
      * Controleer API authenticatie
+     *
+     * Geldige credentials worden altijd geaccepteerd, ook als het IP-adres door eerdere
+     * mislukte pogingen (bijv. van een andere client achter dezelfde proxy) is geblokkeerd.
+     * De rate limit geldt alleen voor mislukte pogingen.
      */
     public function check_api_authentication($request) {
-        $ip = $this->get_client_ip();
-
-        if ($this->is_rate_limited($ip)) {
-            return new WP_Error(
-                'rest_too_many_requests',
-                'Te veel mislukte authenticatiepogingen. Probeer het later opnieuw.',
-                array('status' => 429)
-            );
-        }
-
         $this->maybe_migrate_single_key_to_clients();
         $clients = $this->get_api_clients();
 
@@ -907,11 +976,9 @@ Bearer Token: base64_encode(api_key + ':' + hmac_signature)
         $api_key = $request->get_param('api_key');
         $api_secret = $request->get_param('api_secret');
 
-        if (!empty($api_key) && !empty($api_secret)) {
+        if (is_string($api_key) && is_string($api_secret) && $api_key !== '' && $api_secret !== '') {
             if (isset($clients[$api_key]) && empty($clients[$api_key]['revoked']) && hash_equals($clients[$api_key]['secret'], $api_secret)) {
-                $clients[$api_key]['last_used_at'] = time();
-                $this->save_api_clients($clients);
-                $this->clear_auth_failures($ip);
+                $this->touch_client_last_used($api_key, $clients);
                 return true;
             }
         }
@@ -924,14 +991,22 @@ Bearer Token: base64_encode(api_key + ':' + hmac_signature)
 
             $client_key = $this->validate_bearer_token_multi($token, $clients);
             if ($client_key !== false) {
-                $clients[$client_key]['last_used_at'] = time();
-                $this->save_api_clients($clients);
-                $this->clear_auth_failures($ip);
+                $this->touch_client_last_used($client_key, $clients);
                 return true;
             }
         }
 
         // Authenticatie mislukt
+        $ip = $this->get_client_ip($request);
+
+        if ($this->is_rate_limited($ip)) {
+            return new WP_Error(
+                'rest_too_many_requests',
+                'Te veel mislukte authenticatiepogingen. Probeer het later opnieuw.',
+                array('status' => 429)
+            );
+        }
+
         $this->record_auth_failure($ip);
         return new WP_Error(
             'rest_forbidden',
@@ -981,7 +1056,12 @@ Bearer Token: base64_encode(api_key + ':' + hmac_signature)
         // Verkrijg huidige status data met betere defaults
         $status_data = $this->get_status_data();
         
-        // Formatteer response
+        $expiry = $this->parse_local_datetime($status_data['expiry_date']);
+
+        // Formatteer response.
+        // Let op: 'timestamp' en 'statusExpiryTimestamp' zijn (historisch) lokale tijd als
+        // Unix-timestamp weergegeven en blijven ongewijzigd voor backwards compatibility.
+        // De *Utc en *Iso8601 velden bevatten de correcte, tijdzone-bewuste waarden.
         $response = array(
             'title' => $status_data['title'],
             'text' => $status_data['content'],
@@ -992,9 +1072,36 @@ Bearer Token: base64_encode(api_key + ':' + hmac_signature)
             'statusExpiryTimestamp' => !empty($status_data['expiry_date'])
                 ? strtotime($status_data['expiry_date'])
                 : null,
+            'timestampUtc' => time(),
+            'statusExpiryTimestampUtc' => $expiry ? $expiry->getTimestamp() : null,
+            'statusExpiryIso8601' => $expiry ? $expiry->format(DATE_ATOM) : null,
         );
-    
+
         return rest_ensure_response($response);
+    }
+
+    /**
+     * Interpreteer een opgeslagen datum/tijd ('Y-m-d H:i') in de tijdzone van de site.
+     * Retourneert een DateTimeImmutable of null.
+     */
+    private function parse_local_datetime($value) {
+        if (!is_string($value) || trim($value) === '') {
+            return null;
+        }
+
+        $timezone = wp_timezone();
+        foreach (array('!Y-m-d H:i', '!Y-m-d H:i:s', '!Y-m-d') as $format) {
+            $date = DateTimeImmutable::createFromFormat($format, trim($value), $timezone);
+            if ($date !== false) {
+                return $date;
+            }
+        }
+
+        try {
+            return new DateTimeImmutable(trim($value), $timezone);
+        } catch (Exception $e) {
+            return null;
+        }
     }
     
     /**
@@ -1229,6 +1336,19 @@ class Status_Message_Manager {
             
             // Bereid nieuwe status data voor
             $new_status_data = $this->prepare_status_data_from_form();
+
+            // Ongeldige vervaldatum/-tijd: niet opslaan, invoer bewaren en melding tonen
+            if ($new_status_data === false) {
+                set_transient($this->get_form_draft_key(), $this->get_form_draft(), 10 * MINUTE_IN_SECONDS);
+                wp_redirect(add_query_arg(
+                    array(
+                        'page' => 'status-api',
+                        'message' => 'invalid_expiry'
+                    ),
+                    admin_url('admin.php')
+                ));
+                exit;
+            }
             
             // Bepaal type wijziging
             $change_note = $this->determine_change_note($current_status, $new_status_data);
@@ -1301,9 +1421,9 @@ class Status_Message_Manager {
      * Bereid status data voor uit formulier
      */
     private function prepare_status_data_from_form() {
-        $title = isset($_POST['title']) ? sanitize_text_field($_POST['title']) : '';
-        $content = isset($_POST['content']) ? wp_kses_post($_POST['content']) : '';
-        $status = isset($_POST['status']) ? sanitize_text_field($_POST['status']) : 'geen';
+        $title = isset($_POST['title']) ? sanitize_text_field(wp_unslash($_POST['title'])) : '';
+        $content = isset($_POST['content']) ? wp_kses_post(wp_unslash($_POST['content'])) : '';
+        $status = isset($_POST['status']) ? sanitize_text_field(wp_unslash($_POST['status'])) : 'geen';
 
         if (!array_key_exists($status, self::STATUS_OPTIONS)) {
             $status = 'geen';
@@ -1318,15 +1438,55 @@ class Status_Message_Manager {
         
         // Bereid expiry date voor voor groene status
         if ($status === 'green' && isset($_POST['expiry_date']) && !empty($_POST['expiry_date'])) {
-            $date = sanitize_text_field($_POST['expiry_date']);
+            $date = trim(sanitize_text_field(wp_unslash($_POST['expiry_date'])));
             $time = isset($_POST['expiry_time']) && !empty($_POST['expiry_time']) 
-                  ? sanitize_text_field($_POST['expiry_time']) 
+                  ? trim(sanitize_text_field(wp_unslash($_POST['expiry_time'])))
                   : '00:00';
-            
-            $status_data['expiry_date'] = $date . ' ' . $time;
+
+            $expiry_date = $this->normalize_expiry($date, $time);
+            if ($expiry_date === false) {
+                return false;
+            }
+
+            $status_data['expiry_date'] = $expiry_date;
         }
         
         return $status_data;
+    }
+
+    /**
+     * Valideer vervaldatum (Y-m-d) en -tijd (H:i of H:i:s).
+     * Retourneert 'Y-m-d H:i' of false bij een ongeldige (of niet-bestaande) datum/tijd.
+     */
+    private function normalize_expiry($date, $time) {
+        if (preg_match('/^\d{2}:\d{2}:\d{2}$/', $time)) {
+            $time = substr($time, 0, 5);
+        }
+
+        $value = $date . ' ' . $time;
+        $parsed = DateTime::createFromFormat('!Y-m-d H:i', $value);
+        if ($parsed === false || $parsed->format('Y-m-d H:i') !== $value) {
+            return false;
+        }
+
+        return $value;
+    }
+
+    private function get_form_draft_key() {
+        return 'status_api_form_draft_' . get_current_user_id();
+    }
+
+    /**
+     * Bewaar de ingevulde formulierwaarden, zodat ze na een validatiefout niet verloren gaan
+     */
+    private function get_form_draft() {
+        return array(
+            'title' => isset($_POST['title']) ? sanitize_text_field(wp_unslash($_POST['title'])) : '',
+            'content' => isset($_POST['content']) ? wp_kses_post(wp_unslash($_POST['content'])) : '',
+            'status' => isset($_POST['status']) ? sanitize_text_field(wp_unslash($_POST['status'])) : 'geen',
+            'expiry_date' => isset($_POST['expiry_date']) ? sanitize_text_field(wp_unslash($_POST['expiry_date'])) : '',
+            'expiry_time' => isset($_POST['expiry_time']) ? sanitize_text_field(wp_unslash($_POST['expiry_time'])) : '',
+        );
     }
     
     /**
@@ -1387,6 +1547,26 @@ class Status_Message_Manager {
         }
         
         $status_info = $this->get_status_info($status);
+
+        // Waarden voor het formulier; na een validatiefout de eerder ingevulde waarden
+        $form_title = $title;
+        $form_content = $content;
+        $form_status = $status;
+        $form_expiry_date = $expiry_date_only;
+        $form_expiry_time = $expiry_time_only;
+
+        $invalid_expiry = isset($_GET['message']) && $_GET['message'] === 'invalid_expiry';
+        if ($invalid_expiry) {
+            $draft = get_transient($this->get_form_draft_key());
+            if (is_array($draft)) {
+                $form_title = $draft['title'];
+                $form_content = $draft['content'];
+                $form_status = array_key_exists($draft['status'], self::STATUS_OPTIONS) ? $draft['status'] : 'geen';
+                $form_expiry_date = $draft['expiry_date'];
+                $form_expiry_time = $draft['expiry_time'];
+                delete_transient($this->get_form_draft_key());
+            }
+        }
         
         ?>
         <div class="wrap">
@@ -1395,6 +1575,10 @@ class Status_Message_Manager {
             <?php if (isset($_GET['message']) && $_GET['message'] === 'updated') : ?>
                 <div class="notice notice-success is-dismissible">
                     <p>Status melding bijgewerkt.</p>
+                </div>
+            <?php elseif ($invalid_expiry) : ?>
+                <div class="notice notice-error is-dismissible">
+                    <p>Status melding <strong>niet</strong> opgeslagen: de vervaldatum of -tijd is ongeldig. Gebruik het formaat JJJJ-MM-DD en UU:MM.</p>
                 </div>
             <?php endif; ?>
             
@@ -1439,14 +1623,14 @@ class Status_Message_Manager {
                     <tr>
                         <th scope="row"><label for="title">Titel</label></th>
                         <td>
-                            <input type="text" name="title" id="title" class="regular-text" value="<?php echo esc_attr($title); ?>">
+                            <input type="text" name="title" id="title" class="regular-text" value="<?php echo esc_attr($form_title); ?>">
                         </td>
                     </tr>
                     <tr>
                         <th scope="row"><label for="content">Inhoud</label></th>
                         <td>
                             <?php
-                            wp_editor($content, 'content', array(
+                            wp_editor($form_content, 'content', array(
                                 'textarea_name' => 'content',
                                 'media_buttons' => false,
                                 'textarea_rows' => 10
@@ -1459,24 +1643,24 @@ class Status_Message_Manager {
                         <td>
                             <select name="status" id="status">
                                 <?php foreach (self::STATUS_OPTIONS as $key => $info) : ?>
-                                    <option value="<?php echo esc_attr($key); ?>" <?php selected($status, $key); ?>>
+                                    <option value="<?php echo esc_attr($key); ?>" <?php selected($form_status, $key); ?>>
                                         <?php echo esc_html($info['label']); ?>
                                     </option>
                                 <?php endforeach; ?>
                             </select>
                         </td>
                     </tr>
-                    <tr class="expiry-date-field" style="<?php echo ($status !== 'green') ? 'display:none;' : ''; ?>">
+                    <tr class="expiry-date-field" style="<?php echo ($form_status !== 'green') ? 'display:none;' : ''; ?>">
                         <th scope="row"><label for="expiry_date">Vervaldatum</label></th>
                         <td>
-                            <input type="text" name="expiry_date" id="expiry_date" class="regular-text" value="<?php echo esc_attr($expiry_date_only); ?>" placeholder="JJJJ-MM-DD">
+                            <input type="text" name="expiry_date" id="expiry_date" class="regular-text" value="<?php echo esc_attr($form_expiry_date); ?>" placeholder="JJJJ-MM-DD">
                             <p class="description">Datum waarop de status terug naar 'geen' gaat.</p>
                         </td>
                     </tr>
-                    <tr class="expiry-date-field" style="<?php echo ($status !== 'green') ? 'display:none;' : ''; ?>">
+                    <tr class="expiry-date-field" style="<?php echo ($form_status !== 'green') ? 'display:none;' : ''; ?>">
                         <th scope="row"><label for="expiry_time">Vervaltijd</label></th>
                         <td>
-                            <input type="time" name="expiry_time" id="expiry_time" value="<?php echo esc_attr($expiry_time_only); ?>">
+                            <input type="time" name="expiry_time" id="expiry_time" value="<?php echo esc_attr($form_expiry_time); ?>">
                             <p class="description">Tijd waarop de status terug naar 'geen' gaat.</p>
                         </td>
                     </tr>
@@ -1663,12 +1847,12 @@ class Status_History_Manager {
             fputcsv($output, array(
                 $entry->id,
                 $status_info['label'],
-                $entry->title,
-                strip_tags($entry->content),
+                $this->csv_safe($entry->title),
+                $this->csv_safe(strip_tags($entry->content)),
                 $entry->expiry_date ? date_i18n('j F Y H:i', strtotime($entry->expiry_date)) : '',
                 date_i18n('j F Y H:i', strtotime($entry->change_date)),
-                $entry->change_note,
-                $entry->changed_by
+                $this->csv_safe($entry->change_note),
+                $this->csv_safe($entry->changed_by)
             ), ';');
         }
         
@@ -1676,6 +1860,18 @@ class Status_History_Manager {
         exit;
     }
     
+    /**
+     * Voorkom CSV/formule-injectie: waarden die in Excel/LibreOffice als formule
+     * worden uitgevoerd (beginnend met = + - @ tab of CR) krijgen een ' als prefix.
+     */
+    private function csv_safe($value) {
+        $value = (string) $value;
+        if ($value !== '' && strpos("=+-@\t\r", $value[0]) !== false) {
+            return "'" . $value;
+        }
+        return $value;
+    }
+
     /**
      * Wis historie
      */
