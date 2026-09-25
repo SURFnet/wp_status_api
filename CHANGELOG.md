@@ -1,12 +1,16 @@
 # Changelog
 
-<<<<<<< HEAD
-=======
+## 0.9.9.5
+
+- Hotfix: onopgeloste merge-conflictmarkeringen uit release 0.9.9.4 verwijderd (die veroorzaakten een PHP parse error).
+- Versienummer in de plugin-header weer gelijk getrokken met de release-tag.
+- Release-workflow controleert nu PHP-syntax, conflictmarkeringen en of het versienummer overeenkomt met de tag.
+- Rate limiting op mislukte authenticatiepogingen en extra capability-checks op admin-acties.
+
 ## 0.9.9.1
 
 - Compactere API clients UI met verborgen credentials en Dependabot voor Composer updates.
 
->>>>>>> 6424a225ff9f37098395df2ab0b5add5a8984523
 ## 0.9.9
 
 - Meerdere Clients mogelijkheid toegevoegd en opschonen van de AdminUI. 

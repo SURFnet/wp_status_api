@@ -20,6 +20,31 @@ jobs:
           php-version: "8.2"
           tools: composer
 
+      - name: Check for merge conflict markers
+        run: |
+          if git grep -nE '^(<<<<<<<|=======|>>>>>>>)( |$)' -- . ':!vendor'; then
+            echo "::error::Merge conflict markers gevonden"
+            exit 1
+          fi
+
+      - name: Lint PHP
+        run: |
+          find . -name '*.php' -not -path './vendor/*' -print0 | xargs -0 -n1 php -l
+
+      - name: Check plugin version matches tag
+        run: |
+          TAG_VERSION="${GITHUB_REF_NAME#v}"
+          HEADER_VERSION="$(sed -n 's/^[[:space:]]*\*[[:space:]]*Version:[[:space:]]*//p' status-api.php | head -n1 | tr -d '[:space:]')"
+          echo "Tag: ${TAG_VERSION} / Header: ${HEADER_VERSION}"
+          if [ "${TAG_VERSION}" != "${HEADER_VERSION}" ]; then
+            echo "::error::Plugin header Version (${HEADER_VERSION}) komt niet overeen met tag (${TAG_VERSION})"
+            exit 1
+          fi
+          if ! grep -qE "^## ${TAG_VERSION//./\\.}[[:space:]]*$" CHANGELOG.md; then
+            echo "::error::Geen CHANGELOG-entry voor ${TAG_VERSION}"
+            exit 1
+          fi
+
       - name: Install Composer dependencies (no-dev)
         run: composer install --no-dev --prefer-dist --no-interaction --no-progress
 
