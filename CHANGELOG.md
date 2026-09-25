@@ -1,5 +1,22 @@
 # Changelog
 
+## 0.9.11
+
+Robuustheid en onderhoud (backwards compatible: REST-route, JSON-velden, authenticatie, option-namen, klassenamen en `$status_api_plugin` ongewijzigd):
+
+- Code opgesplitst: één klasse per bestand in `includes/`, admin-CSS/JS in `assets/`. `status-api.php` blijft het hoofdbestand.
+- Historie-tabel heeft nu een schemaversie (`status_api_db_version`) en wordt ook na updates via de update-checker en op alle sites in een multisite-netwerk automatisch aangemaakt/bijgewerkt. dbDelta-SQL gecorrigeerd.
+- `uninstall.php`: verwijdert altijd de cronjob; gegevens (clients, status, historie) alleen als `STATUS_API_DELETE_DATA_ON_UNINSTALL` in `wp-config.php` op `true` staat.
+- Deactiveren verwijdert alle geplande cronjobs van de plugin (`wp_clear_scheduled_hook`).
+- `status_last_expiry_check` wordt buiten cron nog maximaal eens per 5 minuten geschreven.
+- Eén gedeelde historie-instantie in plaats van losse instanties per actie.
+- Native datumveld in plaats van jQuery UI; de stylesheet van `code.jquery.com` wordt niet meer geladen (privacy/CSP).
+- Plugin-headers `Requires at least: 5.3`, `Requires PHP: 7.4` en `Update URI`.
+- Status-response stuurt `Cache-Control: no-store, private` mee (aan te passen met filter `status_api_cache_control`).
+- Bevestigingsvraag bij secret regenereren, intrekken en verwijderen; historie toont opgemaakte inhoud in plaats van HTML-tags; `wp_safe_redirect`.
+- Testset (`php tests/run.php`) met contracttest op het JSON-formaat; GitHub-workflow draait tests op PHP 7.4 t/m 8.4 en vóór elke release.
+- Composer classmap verwijderd (klassen worden via `require_once` geladen).
+
 ## 0.9.10
 
 Beveiliging en correctheid (volledig backwards compatible):

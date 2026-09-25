@@ -6,6 +6,15 @@ Deze plugin publiceert een REST API endpoint met status-/storingsinformatie.
 
 - Plaats de plugin in `wp-content/plugins/wp_status_api/`
 - Activeer de plugin in WordPress
+- Vereist WordPress 5.3+ en PHP 7.4+
+
+## Verwijderen
+
+Bij het verwijderen van de plugin blijven API clients, status en historie standaard bewaard, zodat opnieuw installeren geen integraties breekt. Om bij verwijderen alles op te ruimen, zet in `wp-config.php`:
+
+```php
+define('STATUS_API_DELETE_DATA_ON_UNINSTALL', true);
+```
 
 ## Authenticatie
 
@@ -43,6 +52,7 @@ Let op: `timestamp` en `statusExpiryTimestamp` zijn om historische redenen de lo
 - `status_api_auth_rate_limit_max_attempts` (int, standaard 20) — aantal mislukte pogingen per IP binnen het venster.
 - `status_api_auth_rate_limit_window` (int seconden, standaard 900).
 - `status_api_last_used_throttle` (int seconden, standaard 300) — hoe vaak "Laatst gebruikt" maximaal wordt bijgewerkt.
+- `status_api_cache_control` (string, standaard `no-store, private`) — `Cache-Control` header van de status-response. Lege string = geen header.
 
 Voorbeeld (alleen gebruiken als élk verzoek via je eigen proxy binnenkomt):
 
@@ -62,6 +72,16 @@ add_filter('status_api_client_ip', function ($ip) {
 
 - Composer (optioneel): `composer install`
 - Vendor wordt niet gecommit (zie `.gitignore`).
+- Tests (geen afhankelijkheden nodig): `php tests/run.php`
+- `tests/test-api-response.php` is een contracttest op het JSON-formaat: bestaande velden mogen niet verdwijnen of van type veranderen; nieuwe velden alleen achteraan toevoegen.
+
+### Structuur
+
+- `status-api.php` — hoofdbestand (niet hernoemen: WordPress herkent de plugin aan `wp_status_api/status-api.php`)
+- `includes/` — één klasse per bestand
+- `assets/` — admin CSS/JS
+- `uninstall.php` — opruimen bij verwijderen
+- `tests/` — testset (niet in de release-zip)
 
 ## Licentie
 

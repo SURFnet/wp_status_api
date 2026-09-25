@@ -1,0 +1,16 @@
+/* Status API - API Instellingen pagina */
+.status-api-field { display: flex; gap: 8px; align-items: flex-start; flex-wrap: wrap; }
+.status-api-field input.large-text { width: 100%; max-width: 520px; }
+.status-api-field input.regular-text { width: 100%; max-width: 420px; }
+.status-api-field textarea.large-text { width: 100%; max-width: 520px; font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace; }
+.status-api-actions { display: flex; gap: 6px; flex-wrap: wrap; }
+.status-api-muted { color: #646970; }
+.status-api-badge { display: inline-flex; align-items: center; gap: 6px; padding: 2px 8px; border-radius: 999px; font-weight: 600; font-size: 12px; }
+.status-api-badge--active { background: #e6f6ea; color: #116329; }
+.status-api-badge--revoked { background: #fbeaea; color: #b32d2e; }
+.status-api-row--revoked td { background: #fff7f7; }
+.status-api-label { display: inline-flex; align-items: center; gap: 6px; }
+.status-api-label .dashicons { color: #646970; font-size: 16px; width: 16px; height: 16px; }
+.status-api-actions .button .dashicons { margin-right: 4px; vertical-align: text-top; }
+.status-api-copy.is-copied { border-color: #00a32a; color: #00a32a; }
+.status-api-hidden { display: none; }

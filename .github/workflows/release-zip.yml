@@ -45,6 +45,9 @@ jobs:
             exit 1
           fi
 
+      - name: Run tests
+        run: php tests/run.php
+
       - name: Install Composer dependencies (no-dev)
         run: composer install --no-dev --prefer-dist --no-interaction --no-progress
 
@@ -56,6 +59,10 @@ jobs:
           rsync -a --delete \
             --exclude ".git" \
             --exclude ".github" \
+            --exclude "tests" \
+            --exclude ".editorconfig" \
+            --exclude ".gitattributes" \
+            --exclude ".gitignore" \
             --exclude "node_modules" \
             --exclude "coverage" \
             --exclude "tmp" \

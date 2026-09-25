@@ -2,6 +2,7 @@
 
 # Don't include dev-only files in generated archives (git archive)
 /.github export-ignore
+/tests export-ignore
 /.idea export-ignore
 /.vscode export-ignore
 /vendor export-ignore
